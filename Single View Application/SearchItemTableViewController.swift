@@ -12,7 +12,12 @@ class SearchItemTableViewController: UITableViewController, UISearchBarDelegate 
 
     var itemDataArray: [ItemData] = [ItemData]()
     var imageCache = NSCache<AnyObject, UIImage>()
+    var lockScreen: Bool = false
     
+    var inputText: String = ""
+    let queryLimit: Int = 50
+    var queryOffset: Int = 0
+    var oldOffset: Int = 0
     let entryUrl: String = "https://api.photozou.jp/rest/search_public.json"
     
     override func viewDidLoad() {
@@ -55,14 +60,19 @@ class SearchItemTableViewController: UITableViewController, UISearchBarDelegate 
         // Delete all data
         itemDataArray.removeAll()
         
+        // Initialize offset
+        queryOffset = 0;
+
         // Set parameter for query
-        let parameter = ["keyword": inputText]
+        let parameter = ["keyword": inputText, "limit": String(queryLimit), "offset": String(queryOffset)]
         
         //Create URL with encoded parameter
         let requestUrl = createRequestUrl(parameter: parameter)
         
         // Request API
         request(requestUrl: requestUrl)
+        
+        self.inputText = inputText
         
         // Close key board
         searchBar.resignFirstResponder()
@@ -104,9 +114,16 @@ class SearchItemTableViewController: UITableViewController, UISearchBarDelegate 
     
     // Do request
     func request(requestUrl: String) {
+        
+        if (lockScreen) {
+            return;
+        }
+        lockScreen = true;
+        
         // Create URL
         guard let url: URL = URL(string: requestUrl) else {
             // Fail to create URL
+            self.lockScreen = false;
             return
         }
         
@@ -127,12 +144,14 @@ class SearchItemTableViewController: UITableViewController, UISearchBarDelegate 
                 // Do any work on UI thread
                 DispatchQueue.main.async {
                     self.present(alert, animated: true, completion: nil)
+                    self.lockScreen = false;
                 }
                 return
             }
             
              guard let data = data else {
                 // No data
+                self.lockScreen = false;
                 return
             }
             
@@ -140,15 +159,20 @@ class SearchItemTableViewController: UITableViewController, UISearchBarDelegate 
             guard let jsonData = try! JSONSerialization.jsonObject(
                 with: data, options: JSONSerialization.ReadingOptions.allowFragments) as? [String: Any] else {
                         // Fail to convert
+                        self.lockScreen = false;
                         return
             }
             
            guard let info = jsonData["info"] as? [String: Any] else {
                 // No data
+                self.lockScreen = false;
                 return
             }
                         
-            let photo: [[String: Any]] = (info["photo"] as! [[String: Any]])
+            guard let photo: [[String: Any]] = info["photo"] as? [[String: Any]] else {
+                self.lockScreen = false;
+                return
+            }
             
             for i in 0..<photo.count {
                 let itemData = ItemData()
@@ -169,8 +193,12 @@ class SearchItemTableViewController: UITableViewController, UISearchBarDelegate 
                 self.itemDataArray.append(itemData)
             }
             
+            self.oldOffset = self.queryOffset;
+            self.queryOffset = self.oldOffset + self.queryLimit;
+            
             DispatchQueue.main.async {
                 self.tableView.reloadData()
+                self.lockScreen = false;
             }
         }
         
@@ -284,5 +312,19 @@ class SearchItemTableViewController: UITableViewController, UISearchBarDelegate 
             }
         }
     }
-
+    
+    override func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        
+        if tableView.contentOffset.y + tableView.frame.size.height > tableView.contentSize.height && tableView.isDragging {
+            // Set parameter for query
+            let parameter = ["keyword": inputText, "limit": String(queryLimit), "offset": String(queryOffset + 1)]
+            
+            //Create URL with encoded parameter
+            let requestUrl = createRequestUrl(parameter: parameter)
+            
+            // Request API
+            request(requestUrl: requestUrl)
+            
+        }
+    }
 }
